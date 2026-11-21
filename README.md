@@ -45,7 +45,7 @@ python -m triage scan /path/to/files --yara      # or both together
 
 ## Finding candidates: Defender for Endpoint hunt
 
-[`hunts/unsigned-rare-exe-user-paths.kql`](hunts/unsigned-rare-exe-user-paths.kql) finds executables that are **unsigned (or untrusted), started from user-writable folders, seen on three or fewer of your devices, and rare worldwide** (`FileProfile()` global prevalence). Those are the files worth pulling and triaging. A self-checking test with an attack row and four near misses (signed, Program Files, allow-listed, common across the estate) is in [`unsigned-rare-exe-user-paths.test.kql`](hunts/unsigned-rare-exe-user-paths.test.kql). Paste it into any Azure Data Explorer cluster; it should return `PASS`.
+[`hunts/unsigned-rare-exe-user-paths.kql`](hunts/unsigned-rare-exe-user-paths.kql) finds executables that are **unsigned (or untrusted), started from user-writable folders, seen on three or fewer of your devices, and rare worldwide** (`FileProfile()` global prevalence). Those are the files worth pulling and triaging. A self-checking test with an attack row and four near misses (signed, Program Files, allow-listed, common across the estate) is in [`unsigned-rare-exe-user-paths.test.kql`](hunts/unsigned-rare-exe-user-paths.test.kql). Paste it into any Azure Data Explorer cluster; it returns `PASS` (verified on the ADX free cluster).
 
 The workflow: **hunt** for rare unsigned executables → **collect** the file (Defender "Collect file" or Live Response) → **triage** it here → detonate or unpack what scores high, and add the hash/signer to the hunt's allow list when it's legitimate.
 
