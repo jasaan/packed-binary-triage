@@ -1,0 +1,26 @@
+// Hunt: unsigned, rarely seen executables started from user-writable folders
+// Purpose: find candidate packed/crypted payloads to pull and triage (python -m triage scan).
+// Data: Microsoft Defender for Endpoint (DeviceProcessEvents, DeviceFileCertificateInfo), Advanced Hunting.
+// MITRE ATT&CK: T1027.002 Software Packing (candidates), T1204.002 User Execution: Malicious File
+// Tuning: add your software deployment paths and signed internal tools to the allow lists.
+let lookback = 7d;
+let userWritable = @"\\(users|appdata|temp|downloads|programdata|public)\\";
+let allowedPaths = @"\\appdata\\local\\(microsoft\\teams|programs\\microsoft vs code)\\";
+let signed = DeviceFileCertificateInfo
+    | where Timestamp > ago(30d) and IsSigned == true and IsTrusted == true
+    | distinct SHA1;
+DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| where isnotempty(SHA1)
+| extend Folder = tolower(FolderPath)
+| where Folder matches regex userWritable and not(Folder matches regex allowedPaths)
+| where SHA1 !in (signed)
+| summarize Devices = dcount(DeviceId), Launches = count(), FirstSeen = min(Timestamp), LastSeen = max(Timestamp),
+            AnyDevice = any(DeviceName), AnyUser = any(AccountName), AnyParent = any(InitiatingProcessFileName),
+            AnyPath = any(FolderPath)
+    by SHA1, FileName
+| where Devices <= 3   // rare inside your own estate
+| invoke FileProfile(SHA1, 1000)
+| where isempty(GlobalPrevalence) or GlobalPrevalence < 100   // rare worldwide too
+| project FirstSeen, LastSeen, FileName, SHA1, Devices, Launches, GlobalPrevalence, AnyDevice, AnyUser, AnyParent, AnyPath
+| order by FirstSeen desc

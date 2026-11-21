@@ -1,0 +1,42 @@
+// Self-checking test for unsigned-rare-exe-user-paths.kql. Paste into any Azure Data Explorer cluster
+// (the free cluster works). FileProfile() exists only in Defender Advanced Hunting, so this test checks
+// every step before it. Expected: one row, PASS.
+let DeviceProcessEvents = datatable(Timestamp:datetime, DeviceId:string, DeviceName:string, AccountName:string,
+    FileName:string, FolderPath:string, SHA1:string, InitiatingProcessFileName:string)
+[
+    // ATTACK: unsigned payload from Downloads on one device -> should be found
+    datetime(2026-11-18 09:00), "d1", "wks-01", "ann", "invoice_viewer.exe", @"C:\Users\ann\Downloads\invoice_viewer.exe", "aaa1", "outlook.exe",
+    // NEAR MISS: same kind of path but the file is signed and trusted
+    datetime(2026-11-18 09:05), "d1", "wks-01", "ann", "zoom_installer.exe", @"C:\Users\ann\Downloads\zoom_installer.exe", "bbb2", "explorer.exe",
+    // NEAR MISS: unsigned but in Program Files (not user-writable)
+    datetime(2026-11-18 09:10), "d2", "wks-02", "bo", "legacytool.exe", @"C:\Program Files\Legacy\legacytool.exe", "ccc3", "explorer.exe",
+    // NEAR MISS: allow-listed path
+    datetime(2026-11-18 09:15), "d2", "wks-02", "bo", "Code.exe", @"C:\Users\bo\AppData\Local\Programs\Microsoft VS Code\Code.exe", "ddd4", "explorer.exe",
+    // NEAR MISS: unsigned in AppData but common across the estate (5 devices)
+    datetime(2026-11-18 10:00), "d1", "wks-01", "ann", "helper.exe", @"C:\Users\ann\AppData\Local\Vendor\helper.exe", "eee5", "explorer.exe",
+    datetime(2026-11-18 10:00), "d2", "wks-02", "bo", "helper.exe", @"C:\Users\bo\AppData\Local\Vendor\helper.exe", "eee5", "explorer.exe",
+    datetime(2026-11-18 10:00), "d3", "wks-03", "cy", "helper.exe", @"C:\Users\cy\AppData\Local\Vendor\helper.exe", "eee5", "explorer.exe",
+    datetime(2026-11-18 10:00), "d4", "wks-04", "di", "helper.exe", @"C:\Users\di\AppData\Local\Vendor\helper.exe", "eee5", "explorer.exe",
+    datetime(2026-11-18 10:00), "d5", "wks-05", "ed", "helper.exe", @"C:\Users\ed\AppData\Local\Vendor\helper.exe", "eee5", "explorer.exe",
+];
+let DeviceFileCertificateInfo = datatable(Timestamp:datetime, SHA1:string, IsSigned:bool, IsTrusted:bool)
+[
+    datetime(2026-11-18 09:05), "bbb2", true, true,
+    datetime(2026-11-18 09:00), "aaa1", true, false,   // signed but NOT trusted: still counts as unsigned
+];
+let now = datetime(2026-11-20);
+let lookback = 7d;
+let userWritable = @"\\(users|appdata|temp|downloads|programdata|public)\\";
+let allowedPaths = @"\\appdata\\local\\(microsoft\\teams|programs\\microsoft vs code)\\";
+let signed = DeviceFileCertificateInfo | where Timestamp > now - 30d and IsSigned == true and IsTrusted == true | distinct SHA1;
+let results = DeviceProcessEvents
+| where Timestamp > now - lookback
+| where isnotempty(SHA1)
+| extend Folder = tolower(FolderPath)
+| where Folder matches regex userWritable and not(Folder matches regex allowedPaths)
+| where SHA1 !in (signed)
+| summarize Devices = dcount(DeviceId), Launches = count() by SHA1, FileName
+| where Devices <= 3;
+results
+| summarize Found = make_set(FileName), Rows = count()
+| extend Result = iff(Rows == 1 and Found[0] == "invoice_viewer.exe", "PASS", strcat("FAIL: got ", tostring(Found)))
